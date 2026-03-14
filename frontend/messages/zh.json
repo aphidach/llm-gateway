@@ -518,11 +518,11 @@
       "noProviderModels": "未找到模型。",
       "useSelectedModel": "使用所选模型",
       "cacheBilling": "缓存计费",
-      "cachedInputPrice": "输入价格-缓存（美元/1M tokens）",
-      "cachedOutputPrice": "输出价格-缓存（美元/1M tokens）",
+      "cachedInputPrice": "缓存写入价格（美元/1M tokens）",
+      "cachedOutputPrice": "缓存读取价格（美元/1M tokens）",
       "cachedPricePlaceholder": "留空则同标准价格",
-      "tierCachedInputPrice": "输入-缓存（美元/1M）",
-      "tierCachedOutputPrice": "输出-缓存（美元/1M）"
+      "tierCachedInputPrice": "缓存写入（美元/1M）",
+      "tierCachedOutputPrice": "缓存读取（美元/1M）"
     },
     "ruleBuilder": {
       "title": "🎯 匹配规则",
