@@ -11,6 +11,14 @@ from app.common.url_validator import (
     validate_provider_url_loose,
     validate_provider_url_strict,
 )
+from app.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 class TestPrivateIPDetection:
@@ -89,6 +97,20 @@ class TestURLValidationLoose:
         with pytest.raises(ValidationError) as exc_info:
             validate_provider_url_loose("http://192.168.1.1/api")
         assert exc_info.value.code == "private_ip_not_allowed"
+
+    def test_private_ip_allowed_when_config_enabled(self, monkeypatch):
+        monkeypatch.setenv("ALLOW_PRIVATE_IP_PROVIDER", "true")
+
+        result = validate_provider_url_loose("http://192.168.1.1/api")
+
+        assert result == "http://192.168.1.1/api"
+
+    def test_resolved_private_ip_allowed_when_config_enabled(self, monkeypatch):
+        monkeypatch.setenv("ALLOW_PRIVATE_IP_PROVIDER", "true")
+
+        result = validate_provider_url_loose("http://localhost:8080")
+
+        assert result == "http://localhost:8080"
 
 
 class TestURLValidationStrict:
