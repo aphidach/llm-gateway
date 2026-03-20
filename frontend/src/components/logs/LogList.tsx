@@ -16,13 +16,13 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { 
+import {
   Eye, 
   ArrowRight,
   Waves,
 } from 'lucide-react';
 import { RequestLog } from '@/types';
-import { formatDateTime, getStatusColor, formatUsd } from '@/lib/utils';
+import { formatDateTime, formatDuration, getStatusColor, formatUsd } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 
 interface LogListProps {
@@ -37,6 +37,28 @@ interface LogListProps {
  */
 export function LogList({ logs, onView }: LogListProps) {
   const t = useTranslations('logs');
+
+  const renderResponseTime = (log: RequestLog) => {
+    if (!log.is_stream) {
+      return (
+        <div className="font-mono text-xs">
+          {formatDuration(log.total_time_ms)}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col text-xs">
+        <span className="font-mono">
+          {t('list.ttfb')}: {formatDuration(log.first_byte_delay_ms)}
+        </span>
+        <span className="font-mono text-muted-foreground">
+          {t('list.totalDuration')}: {formatDuration(log.total_time_ms)}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <Table>
       <TableHeader>
@@ -44,6 +66,7 @@ export function LogList({ logs, onView }: LogListProps) {
           <TableHead className="w-[180px]">{t('list.columns.time')}</TableHead>
           <TableHead>{t('list.columns.provider')}</TableHead>
           <TableHead>{t('list.columns.modelMapping')}</TableHead>
+          <TableHead>{t('list.columns.responseTime')}</TableHead>
           <TableHead>{t('list.columns.tokenInOut')}</TableHead>
           <TableHead>{t('list.columns.cost')}</TableHead>
           <TableHead>{t('list.columns.statusRetry')}</TableHead>
@@ -85,6 +108,9 @@ export function LogList({ logs, onView }: LogListProps) {
                     {log.api_key_name}
                   </div>
                 </div>
+              </TableCell>
+              <TableCell>
+                {renderResponseTime(log)}
               </TableCell>
               <TableCell>
                 <div className="flex flex-col text-xs">

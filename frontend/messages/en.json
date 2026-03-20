@@ -646,6 +646,7 @@
         "time": "Time",
         "provider": "Provider",
         "modelMapping": "Model Mapping",
+        "responseTime": "Response Time",
         "tokenInOut": "In/Out Token",
         "cost": "Cost",
         "statusRetry": "Status/Retry",
@@ -656,7 +657,9 @@
       "costTooltip": "Input: {input}\nOutput: {output}",
       "inTokens": "In: {count}",
       "outTokens": "Out: {count}",
-      "retry": "Retry: {count}"
+      "retry": "Retry: {count}",
+      "ttfb": "TTFB",
+      "totalDuration": "Total"
     },
     "filters": {
       "all": "All",

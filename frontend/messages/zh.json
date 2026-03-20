@@ -646,6 +646,7 @@
         "time": "时间",
         "provider": "供应商",
         "modelMapping": "模型映射",
+        "responseTime": "响应时间",
         "tokenInOut": "输入/输出 tokens",
         "cost": "成本",
         "statusRetry": "状态/重试",
@@ -656,7 +657,9 @@
       "costTooltip": "输入：{input}\n输出：{output}",
       "inTokens": "输入：{count}",
       "outTokens": "输出：{count}",
-      "retry": "重试：{count}"
+      "retry": "重试：{count}",
+      "ttfb": "首字节",
+      "totalDuration": "总耗时"
     },
     "filters": {
       "all": "全部",
