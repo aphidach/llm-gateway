@@ -731,6 +731,7 @@
       "request": "请求",
       "response": "响应",
       "headers": "请求头",
+      "debug": "Debug",
       "requestUrl": "请求地址：",
       "upstreamUrl": "上游地址：",
       "originalRequest": "原始请求",
@@ -739,7 +740,19 @@
       "convertedResponse": "转换后的响应（客户端）",
       "requestHeaders": "请求头",
       "responseHeaders": "响应头",
-      "copyAsCurl": "复制为 cURL"
+      "copyAsCurl": "复制为 cURL",
+      "debugDialogTitle": "Debug 上下文",
+      "debugDialogDescription": "已整理当前请求的排查信息，内容按 Markdown 章节拆分展示，复制后可直接发送给协助排查的人。",
+      "debugSections": {
+        "userRequestUrl": "用户请求 URL",
+        "userRequestBody": "用户请求体",
+        "userResponseBody": "用户响应体",
+        "forwardedRequest": "转发后的请求",
+        "forwardedResponse": "转发后的响应",
+        "requestHeaders": "请求头",
+        "responseHeaders": "响应头",
+        "failure": "失败详细信息"
+      }
     },
     "costStats": {
       "activity": "活动",

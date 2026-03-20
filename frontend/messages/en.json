@@ -731,6 +731,7 @@
       "request": "Request",
       "response": "Response",
       "headers": "Headers",
+      "debug": "Debug",
       "requestUrl": "Request:",
       "upstreamUrl": "Upstream:",
       "originalRequest": "Original Request",
@@ -739,7 +740,19 @@
       "convertedResponse": "Converted Response (Client)",
       "requestHeaders": "Request Headers",
       "responseHeaders": "Response Headers",
-      "copyAsCurl": "Copy as cURL"
+      "copyAsCurl": "Copy as cURL",
+      "debugDialogTitle": "Debug Context",
+      "debugDialogDescription": "The current request context has been split into Markdown sections so it is easier to review and share during troubleshooting.",
+      "debugSections": {
+        "userRequestUrl": "User Request URL",
+        "userRequestBody": "User Request Body",
+        "userResponseBody": "User Response Body",
+        "forwardedRequest": "Forwarded Request",
+        "forwardedResponse": "Forwarded Response",
+        "requestHeaders": "Request Headers",
+        "responseHeaders": "Response Headers",
+        "failure": "Failure Details"
+      }
     },
     "costStats": {
       "activity": "Activity",

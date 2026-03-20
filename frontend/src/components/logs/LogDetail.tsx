@@ -10,8 +10,16 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   AlertCircle,
   ArrowRight,
+  Bug,
   Check,
   Clock,
   Columns,
@@ -42,6 +50,67 @@ interface LogDetailProps {
   log: RequestLogDetail | null;
 }
 
+interface DebugSection {
+  title: string;
+  language: "json" | "text";
+  content: unknown;
+}
+
+const MAX_DEBUG_FIELD_LENGTH = 200;
+
+function truncateDebugValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value.length <= MAX_DEBUG_FIELD_LENGTH) return value;
+    return `${value.slice(0, MAX_DEBUG_FIELD_LENGTH)}... [truncated ${
+      value.length - MAX_DEBUG_FIELD_LENGTH
+    } chars]`;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => truncateDebugValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, truncateDebugValue(item)]),
+    );
+  }
+
+  return value;
+}
+
+function renderMarkdownCodeLine(line: string, key: string) {
+  if (line.startsWith("```")) {
+    return (
+      <div key={key}>
+        <span className="text-emerald-300">{line || " "}</span>
+      </div>
+    );
+  }
+
+  if (line.startsWith("# ")) {
+    return (
+      <div key={key}>
+        <span className="text-sky-300">{line || " "}</span>
+      </div>
+    );
+  }
+
+  if (line.startsWith("## ")) {
+    return (
+      <div key={key}>
+        <span className="text-cyan-300">{line || " "}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div key={key}>
+      <span>{line || " "}</span>
+    </div>
+  );
+}
+
 /**
  * Log Detail Component
  */
@@ -53,6 +122,8 @@ export function LogDetail({ log }: LogDetailProps) {
   const [layout, setLayout] = useState<"vertical" | "horizontal">("vertical");
   const [traceCopied, setTraceCopied] = useState(false);
   const [curlCopied, setCurlCopied] = useState(false);
+  const [debugDialogOpen, setDebugDialogOpen] = useState(false);
+  const [debugCopied, setDebugCopied] = useState(false);
 
   const responseStatus = log?.response_status;
   const statusVariant = useMemo<BadgeProps["variant"]>(() => {
@@ -128,6 +199,97 @@ export function LogDetail({ log }: LogDetailProps) {
     if (!ok) return;
     setCurlCopied(true);
     setTimeout(() => setCurlCopied(false), 1500);
+  };
+
+  const debugSections = useMemo<DebugSection[]>(() => {
+    if (!log) return [];
+
+    return [
+      {
+        title: t("detail.debugSections.userRequestUrl"),
+        language: "text",
+        content: `${(log.request_method || "POST").toUpperCase()} ${log.request_path || "-"}`,
+      },
+      {
+        title: t("detail.debugSections.userRequestBody"),
+        language: "json",
+        content: truncateDebugValue(log.request_body || {}),
+      },
+      {
+        title: t("detail.debugSections.userResponseBody"),
+        language: "json",
+        content: truncateDebugValue(log.response_body || {}),
+      },
+      {
+        title: t("detail.debugSections.forwardedRequest"),
+        language: "json",
+        content: {
+          method: (log.request_method || "POST").toUpperCase(),
+          url: log.upstream_url || null,
+          body: truncateDebugValue(log.converted_request_body || {}),
+        },
+      },
+      {
+        title: t("detail.debugSections.forwardedResponse"),
+        language: "json",
+        content: truncateDebugValue(log.upstream_response_body || {}),
+      },
+      {
+        title: t("detail.debugSections.requestHeaders"),
+        language: "json",
+        content: truncateDebugValue(log.request_headers || {}),
+      },
+      {
+        title: t("detail.debugSections.responseHeaders"),
+        language: "json",
+        content: truncateDebugValue(log.response_headers || {}),
+      },
+      {
+        title: t("detail.debugSections.failure"),
+        language: "json",
+        content: {
+          error_info: log.error_info || null,
+          status: log.response_status ?? null,
+          retry_count: log.retry_count ?? 0,
+          trace_id: log.trace_id || null,
+          provider: log.provider_name || null,
+          requested_model: log.requested_model || null,
+          target_model: log.target_model || null,
+          request_protocol: log.request_protocol || null,
+          supplier_protocol: log.supplier_protocol || null,
+          request_time: log.request_time || null,
+        },
+      },
+    ];
+  }, [log, t]);
+
+  const debugMarkdown = useMemo(() => {
+    if (!log) return "";
+
+    return [
+      `# ${t("detail.debugDialogTitle")}`,
+      "",
+      t("detail.debugDialogDescription"),
+      "",
+      ...debugSections.flatMap((section) => [
+        `## ${section.title}`,
+        "",
+        `\`\`\`${section.language}`,
+        section.language === "json"
+          ? JSON.stringify(section.content, null, 2)
+          : String(section.content ?? "-"),
+        "```",
+        "",
+      ]),
+    ].join("\n");
+  }, [debugSections, log, t]);
+
+  const handleCopyDebugMarkdown = async () => {
+    if (!debugMarkdown) return;
+    const ok = await copyToClipboard(debugMarkdown);
+    if (!ok) return;
+    setDebugCopied(true);
+    setTimeout(() => setDebugCopied(false), 1500);
   };
 
   const tabButtonClass = (tab: typeof activeTab) =>
@@ -461,6 +623,15 @@ export function LogDetail({ log }: LogDetailProps) {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setDebugDialogOpen(true)}
+            >
+              <Bug className="h-4 w-4" suppressHydrationWarning />
+              <span>{t("detail.debug")}</span>
+            </Button>
             {(activeTab === "request" || activeTab === "response") && (
               <div className="inline-flex rounded-lg border bg-muted/30 p-1">
                 <button
@@ -697,6 +868,55 @@ export function LogDetail({ log }: LogDetailProps) {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={debugDialogOpen} onOpenChange={setDebugDialogOpen}>
+        <DialogContent className="h-[85vh] max-h-[85vh] w-[min(96vw,1100px)] max-w-none overflow-hidden p-0">
+          <div className="flex h-full min-h-0 min-w-0 flex-col p-6">
+            <DialogHeader className="pr-8">
+              <DialogTitle>{t("detail.debugDialogTitle")}</DialogTitle>
+              <DialogDescription>
+                {t("detail.debugDialogDescription")}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="mt-4 flex shrink-0 items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={handleCopyDebugMarkdown}
+              >
+                {debugCopied ? (
+                  <>
+                    <Check
+                      className="h-4 w-4 text-green-600"
+                      suppressHydrationWarning
+                    />
+                    <span className="text-green-600">{t("detail.copied")}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" suppressHydrationWarning />
+                    <span>{t("detail.copy")}</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="mt-4 min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border bg-slate-950">
+              <div className="h-full max-w-full overflow-x-auto overflow-y-auto">
+                <pre className="min-h-full min-w-full max-w-full p-4 font-mono text-xs leading-6 text-slate-100 select-text">
+                  <code className="block min-w-max max-w-full">
+                  {debugMarkdown.split("\n").map((line, index) =>
+                    renderMarkdownCodeLine(line, `${index}-${line}`),
+                  )}
+                  </code>
+                </pre>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
