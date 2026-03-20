@@ -646,6 +646,7 @@
         "time": "Time",
         "provider": "Provider",
         "modelMapping": "Model Mapping",
+        "responseTime": "Response Time",
         "tokenInOut": "In/Out Token",
         "cost": "Cost",
         "statusRetry": "Status/Retry",
@@ -656,7 +657,9 @@
       "costTooltip": "Input: {input}\nOutput: {output}",
       "inTokens": "In: {count}",
       "outTokens": "Out: {count}",
-      "retry": "Retry: {count}"
+      "retry": "Retry: {count}",
+      "ttfb": "TTFB",
+      "totalDuration": "Total"
     },
     "filters": {
       "all": "All",
@@ -731,6 +734,20 @@
       "request": "Request",
       "response": "Response",
       "headers": "Headers",
+      "retry": "Retry",
+      "retryConfirmTitle": "Confirm Retry",
+      "retryConfirmDescription": "This will replay the original request recorded in the current log. Continue?",
+      "retryConfirmAction": "Retry Now",
+      "retryDialogTitle": "Retry Result",
+      "retryDialogDescription": "The original request from this log has been replayed. The latest response is shown below.",
+      "retryRunning": "Retrying...",
+      "retryResult": "Response Result",
+      "retryStatus": "Response Status",
+      "retryFailed": "Retry failed",
+      "retryTimeout": "Request timed out after 5 minutes",
+      "openRetriedLog": "Open New Log",
+      "retryUnsupported": "This log cannot be retried",
+      "debug": "Debug",
       "requestUrl": "Request:",
       "upstreamUrl": "Upstream:",
       "originalRequest": "Original Request",
@@ -739,7 +756,19 @@
       "convertedResponse": "Converted Response (Client)",
       "requestHeaders": "Request Headers",
       "responseHeaders": "Response Headers",
-      "copyAsCurl": "Copy as cURL"
+      "copyAsCurl": "Copy as cURL",
+      "debugDialogTitle": "Debug Context",
+      "debugDialogDescription": "The current request context has been split into Markdown sections so it is easier to review and share during troubleshooting.",
+      "debugSections": {
+        "userRequestUrl": "User Request URL",
+        "userRequestBody": "User Request Body",
+        "userResponseBody": "User Response Body",
+        "forwardedRequest": "Forwarded Request",
+        "forwardedResponse": "Forwarded Response",
+        "requestHeaders": "Request Headers",
+        "responseHeaders": "Response Headers",
+        "failure": "Failure Details"
+      }
     },
     "costStats": {
       "activity": "Activity",
