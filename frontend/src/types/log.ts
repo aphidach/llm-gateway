@@ -41,12 +41,20 @@ export interface RequestLogDetail extends RequestLog {
   request_protocol?: string;
   supplier_protocol?: string;
   request_path?: string;
+  request_url?: string;
   request_method?: string;
   upstream_url?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   converted_request_body?: Record<string, any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   upstream_response_body?: any;
+}
+
+export interface RetryLogResponse {
+  response_status: number;
+  response_body?: unknown;
+  new_log_id?: number | null;
+  trace_id?: string | null;
 }
 
 /** Log Query Params */

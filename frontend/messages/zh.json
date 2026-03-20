@@ -646,6 +646,7 @@
         "time": "时间",
         "provider": "供应商",
         "modelMapping": "模型映射",
+        "responseTime": "响应时间",
         "tokenInOut": "输入/输出 tokens",
         "cost": "成本",
         "statusRetry": "状态/重试",
@@ -656,7 +657,9 @@
       "costTooltip": "输入：{input}\n输出：{output}",
       "inTokens": "输入：{count}",
       "outTokens": "输出：{count}",
-      "retry": "重试：{count}"
+      "retry": "重试：{count}",
+      "ttfb": "首字节",
+      "totalDuration": "总耗时"
     },
     "filters": {
       "all": "全部",
@@ -731,6 +734,20 @@
       "request": "请求",
       "response": "响应",
       "headers": "请求头",
+      "retry": "Retry",
+      "retryConfirmTitle": "确认重试请求",
+      "retryConfirmDescription": "将按照当前日志记录的原始请求再次发起一次调用，是否继续？",
+      "retryConfirmAction": "确认重试",
+      "retryDialogTitle": "重试结果",
+      "retryDialogDescription": "已按当前日志的原始请求重新发起一次调用，下面展示最新响应结果。",
+      "retryRunning": "重试中...",
+      "retryResult": "响应结果",
+      "retryStatus": "响应状态",
+      "retryFailed": "重试失败",
+      "retryTimeout": "请求在 5 分钟后超时",
+      "openRetriedLog": "查看新日志",
+      "retryUnsupported": "当前日志不支持重试",
+      "debug": "Debug",
       "requestUrl": "请求地址：",
       "upstreamUrl": "上游地址：",
       "originalRequest": "原始请求",
@@ -739,7 +756,19 @@
       "convertedResponse": "转换后的响应（客户端）",
       "requestHeaders": "请求头",
       "responseHeaders": "响应头",
-      "copyAsCurl": "复制为 cURL"
+      "copyAsCurl": "复制为 cURL",
+      "debugDialogTitle": "Debug 上下文",
+      "debugDialogDescription": "已整理当前请求的排查信息，内容按 Markdown 章节拆分展示，复制后可直接发送给协助排查的人。",
+      "debugSections": {
+        "userRequestUrl": "用户请求 URL",
+        "userRequestBody": "用户请求体",
+        "userResponseBody": "用户响应体",
+        "forwardedRequest": "转发后的请求",
+        "forwardedResponse": "转发后的响应",
+        "requestHeaders": "请求头",
+        "responseHeaders": "响应头",
+        "failure": "失败详细信息"
+      }
     },
     "costStats": {
       "activity": "活动",

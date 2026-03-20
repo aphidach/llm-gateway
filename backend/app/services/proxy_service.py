@@ -24,6 +24,7 @@ from app.common.proxy import build_proxy_config
 from app.common.sanitizer import sanitize_headers
 from app.common.stream_usage import StreamUsageAccumulator
 from app.common.time import utc_now
+from app.common.upstream_url import build_upstream_url
 from app.common.token_counter import get_token_counter
 from app.common.usage_extractor import extract_usage_details
 from app.common.utils import generate_trace_id
@@ -346,6 +347,7 @@ class ProxyService:
         api_key_name: Optional[str],
         request_protocol: str,
         path: str,
+        request_url: Optional[str],
         method: str,
         headers: dict[str, str],
         body: dict[str, Any],
@@ -503,6 +505,7 @@ class ProxyService:
                 trace_id=trace_id,
                 is_stream=False,
                 request_path=path,
+                request_url=request_url,
                 request_method=method,
                 upstream_url=conversion_data.get("upstream_url"),
                 # Protocol conversion fields
@@ -587,7 +590,9 @@ class ProxyService:
                 # Track conversion data for logging
                 conversion_data["supplier_protocol"] = supplier_protocol
                 conversion_data["converted_request_body"] = supplier_body
-                conversion_data["upstream_url"] = f"{candidate.base_url.rstrip('/')}{supplier_path}"
+                conversion_data["upstream_url"] = build_upstream_url(
+                    candidate.base_url, supplier_path
+                )
                 same_protocol = normalize_protocol(
                     request_protocol
                 ) == normalize_protocol(supplier_protocol)
@@ -846,6 +851,7 @@ class ProxyService:
             trace_id=trace_id,
             is_stream=False,
             request_path=path,
+            request_url=request_url,
             request_method=method,
             upstream_url=conversion_data.get("upstream_url"),
             # Protocol conversion fields
@@ -886,6 +892,7 @@ class ProxyService:
         api_key_name: Optional[str],
         request_protocol: str,
         path: str,
+        request_url: Optional[str],
         method: str,
         headers: dict[str, str],
         body: dict[str, Any],
@@ -1021,7 +1028,9 @@ class ProxyService:
                 # Track conversion data for logging
                 stream_conversion_data["supplier_protocol"] = supplier_protocol
                 stream_conversion_data["converted_request_body"] = supplier_body
-                stream_conversion_data["upstream_url"] = f"{candidate.base_url.rstrip('/')}{supplier_path}"
+                stream_conversion_data["upstream_url"] = build_upstream_url(
+                    candidate.base_url, supplier_path
+                )
             except Exception as e:
                 error_msg = str(e)
                 logger.error(
@@ -1254,6 +1263,7 @@ class ProxyService:
                 trace_id=trace_id,
                 is_stream=True,
                 request_path=path,
+                request_url=request_url,
                 request_method=method,
                 upstream_url=stream_conversion_data.get("upstream_url"),
                 # Protocol conversion fields
@@ -1469,6 +1479,7 @@ class ProxyService:
                     trace_id=trace_id,
                     is_stream=True,
                     request_path=path,
+                    request_url=request_url,
                     request_method=method,
                     upstream_url=stream_conversion_data.get("upstream_url"),
                     # Protocol conversion fields

@@ -120,6 +120,8 @@ def validate_provider_url(url: str, strict: bool = False) -> str:
     Raises:
         ValidationError: If the URL is invalid or potentially dangerous
     """
+    settings = get_settings()
+
     if not url:
         raise ValidationError(
             message="URL cannot be empty",
@@ -172,7 +174,7 @@ def validate_provider_url(url: str, strict: bool = False) -> str:
             )
 
     # Check for private IP in hostname (direct IP URL)
-    if is_private_ip(hostname):
+    if not settings.ALLOW_PRIVATE_IP_PROVIDER and is_private_ip(hostname):
         logger.warning(
             "URL validation failed: private IP '%s' detected",
             hostname,
@@ -184,7 +186,11 @@ def validate_provider_url(url: str, strict: bool = False) -> str:
 
     # Resolve hostname and check if it resolves to private IP
     resolved_ip = resolve_ip(hostname)
-    if resolved_ip and is_private_ip(resolved_ip):
+    if (
+        not settings.ALLOW_PRIVATE_IP_PROVIDER
+        and resolved_ip
+        and is_private_ip(resolved_ip)
+    ):
         logger.warning(
             "URL validation failed: hostname '%s' resolves to private IP '%s'",
             hostname,

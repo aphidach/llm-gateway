@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # HTTP Client Config
     # Request timeout (seconds)
     HTTP_TIMEOUT: int = 1800
+    # Whether provider base URLs may use private/internal IP addresses
+    ALLOW_PRIVATE_IP_PROVIDER: bool = False
 
     # API Key Config
     # Generated API Key prefix
