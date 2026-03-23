@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from app.common.protocol import sanitize_gemini_request_body
 from app.common.protocol_conversion import (
     convert_request_for_supplier,
     convert_response_for_user,
@@ -1220,6 +1221,49 @@ def test_convert_request_openai_to_gemini_strips_unsupported_response_schema_key
     assert "$schema" not in response_schema
     assert "patternProperties" not in json.dumps(response_schema)
     assert response_schema["properties"]["env"] == {"type": "object"}
+
+
+def test_sanitize_gemini_request_body_is_public_helper():
+    out_body = sanitize_gemini_request_body(
+        {
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "exec",
+                            "parameters": {
+                                "$schema": "http://json-schema.org/draft-07/schema#",
+                                "type": "object",
+                                "properties": {
+                                    "env": {
+                                        "type": "object",
+                                        "additionalProperties": True,
+                                    }
+                                },
+                            },
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseSchema": {
+                    "type": "object",
+                    "properties": {
+                        "env": {
+                            "type": "object",
+                            "patternProperties": {"^(.*)$": {"type": "string"}},
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    params = out_body["tools"][0]["functionDeclarations"][0]["parameters"]
+    response_schema = out_body["generationConfig"]["responseSchema"]
+    assert "$schema" not in params
+    assert "additionalProperties" not in json.dumps(params)
+    assert "patternProperties" not in json.dumps(response_schema)
 
 
 def test_convert_request_openai_completion_to_gemini():
