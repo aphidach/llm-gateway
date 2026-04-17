@@ -122,9 +122,10 @@ export function ModelFilters({ filters, onFilterChange }: ModelFiltersProps) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{tCommon('all')}</SelectItem>
-                <SelectItem value="round_robin">{t('filters.roundRobin')}</SelectItem>
-                <SelectItem value="cost_first">{t('filters.costFirst')}</SelectItem>
-                <SelectItem value="priority">{t('filters.priority')}</SelectItem>
+                    <SelectItem value="round_robin">{t('filters.roundRobin')}</SelectItem>
+                    <SelectItem value="cost_first">{t('filters.costFirst')}</SelectItem>
+                    <SelectItem value="priority">{t('filters.priority')}</SelectItem>
+                    <SelectItem value="quota_aware">{t('filters.quotaAware')}</SelectItem>
               </SelectContent>
             </Select>
           </div>

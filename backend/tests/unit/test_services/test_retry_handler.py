@@ -5,8 +5,10 @@ Retry Handler Unit Tests
 import pytest
 from unittest.mock import AsyncMock
 from app.services.retry_handler import RetryHandler
-from app.services.strategy import RoundRobinStrategy
+from app.services.strategy import QuotaAwareStrategy, RoundRobinStrategy
 from app.providers.base import ProviderResponse
+from app.domain.quota import ProviderQuotaState
+from app.common.time import utc_now
 from app.rules.models import CandidateProvider
 
 
@@ -202,3 +204,72 @@ class TestRetryHandler:
         assert result.success is True
         assert result.final_provider.provider_mapping_id == 202
         assert called_models == ["model-a", "model-b"]
+
+    @pytest.mark.asyncio
+    async def test_quota_failure_skips_sibling_mappings_for_same_provider(self):
+        strategy = QuotaAwareStrategy()
+        handler = RetryHandler(strategy)
+        handler.max_retries = 1
+        quota_state_map = {
+            1: ProviderQuotaState(provider_id=1, status="healthy", reset_at=utc_now()),
+            2: ProviderQuotaState(provider_id=2, status="healthy", reset_at=utc_now()),
+        }
+        candidates = [
+            CandidateProvider(
+                provider_mapping_id=201,
+                provider_id=1,
+                provider_name="Provider1",
+                base_url="https://api1.com",
+                protocol="openai",
+                api_key="key1",
+                target_model="model-a",
+                priority=0,
+            ),
+            CandidateProvider(
+                provider_mapping_id=202,
+                provider_id=1,
+                provider_name="Provider1",
+                base_url="https://api1.com",
+                protocol="openai",
+                api_key="key1",
+                target_model="model-b",
+                priority=0,
+            ),
+            CandidateProvider(
+                provider_mapping_id=301,
+                provider_id=2,
+                provider_name="Provider2",
+                base_url="https://api2.com",
+                protocol="openai",
+                api_key="key2",
+                target_model="model-c",
+                priority=1,
+            ),
+        ]
+        called_models: list[str] = []
+
+        async def forward_fn(candidate):
+            called_models.append(candidate.target_model)
+            if candidate.target_model == "model-a":
+                return ProviderResponse(status_code=429, error="insufficient_quota")
+            return ProviderResponse(status_code=200, body={"result": "ok"})
+
+        async def on_failure_attempt(attempt):
+            quota_state_map[attempt.provider.provider_id] = ProviderQuotaState(
+                provider_id=attempt.provider.provider_id,
+                status="exhausted",
+                in_cooldown=True,
+                reset_at=utc_now(),
+            )
+
+        result = await handler.execute_with_retry(
+            candidates=candidates,
+            requested_model="auto",
+            forward_fn=forward_fn,
+            quota_state_map=quota_state_map,
+            on_failure_attempt=on_failure_attempt,
+        )
+
+        assert result.success is True
+        assert result.final_provider.provider_mapping_id == 301
+        assert called_models == ["model-a", "model-c"]

@@ -38,6 +38,7 @@ def _make_log_data(**overrides) -> RequestLogCreate:
         response_headers={"content-type": "application/json"},
         error_info=None,
         usage_details={"prompt_tokens": 10, "completion_tokens": 20},
+        routing_details={"strategy": "quota_aware", "selected_provider_id": 1},
         converted_request_body={"model": "gpt-4-turbo"},
         upstream_response_body='{"id":"resp-1"}',
     )
@@ -76,6 +77,10 @@ async def test_create_stores_detail_separately(db_session):
     assert detail.request_headers == {"authorization": "Bearer ***"}
     assert detail.response_headers == {"content-type": "application/json"}
     assert detail.usage_details == {"prompt_tokens": 10, "completion_tokens": 20}
+    assert detail.routing_details == {
+        "strategy": "quota_aware",
+        "selected_provider_id": 1,
+    }
     assert detail.converted_request_body == {"model": "gpt-4-turbo"}
     assert detail.upstream_response_body == '{"id":"resp-1"}'
 
@@ -96,6 +101,10 @@ async def test_create_returns_full_model_with_detail(db_session):
     assert created.response_body == '{"result":"ok"}'
     assert created.error_info == "some error"
     assert created.request_headers == {"authorization": "Bearer ***"}
+    assert created.routing_details == {
+        "strategy": "quota_aware",
+        "selected_provider_id": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -114,6 +123,10 @@ async def test_get_by_id_returns_full_detail(db_session):
     assert fetched.request_body == {"messages": [{"role": "user", "content": "test"}]}
     assert fetched.response_body == '{"result":"ok"}'
     assert fetched.error_info == "some error"
+    assert fetched.routing_details == {
+        "strategy": "quota_aware",
+        "selected_provider_id": 1,
+    }
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ Defines the data access interface for request logs.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import List, Tuple
 
 from app.domain.log import (
@@ -18,6 +19,7 @@ from app.domain.log import (
     ModelProviderStats,
     ApiKeyMonthlyCost,
 )
+from app.domain.quota import ProviderDailyUsage
 
 
 class LogRepository(ABC):
@@ -139,5 +141,23 @@ class LogRepository(ABC):
 
         Returns:
             list[ApiKeyMonthlyCost]: List of API Key monthly cost summaries
+        """
+        pass
+
+    @abstractmethod
+    async def get_provider_daily_usage(
+        self,
+        *,
+        provider_ids: list[int] | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> list[ProviderDailyUsage]:
+        """
+        Aggregate provider token usage for the given time range.
+
+        Args:
+            provider_ids: Optional provider IDs to limit the query.
+            start_time: Inclusive start time.
+            end_time: Exclusive end time.
         """
         pass

@@ -72,6 +72,10 @@ class RequestLogCreate(RequestLogBase):
     response_body: Optional[str] = Field(None, description="Response Body")
     # Usage Details (normalized)
     usage_details: Optional[dict[str, Any]] = Field(None, description="Usage Details")
+    # Routing metadata (strategy/quota/fallback decisions)
+    routing_details: Optional[dict[str, Any]] = Field(
+        None, description="Routing Details"
+    )
     # Error Info
     error_info: Optional[str] = Field(None, description="Error Info")
     # Matched Provider Count

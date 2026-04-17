@@ -163,6 +163,12 @@ def _run_migrations(sync_conn) -> None:
             "remark": "remark TEXT",
         },
     )
+    ensure_columns(
+        "request_log_details",
+        {
+            "routing_details": "routing_details JSON",
+        },
+    )
 
     # Migrate existing request_logs data to request_log_details table
     if "request_log_details" in table_names and "request_logs" in table_names:

@@ -27,7 +27,9 @@ from app.services import (
     ModelService,
     PriorityStrategy,
     ProviderService,
+    ProviderQuotaService,
     ProxyService,
+    QuotaAwareStrategy,
     RoundRobinStrategy,
 )
 from app.services.protocol_hooks import ProtocolConversionHooks
@@ -36,6 +38,7 @@ from app.services.protocol_hooks import ProtocolConversionHooks
 _round_robin_strategy = RoundRobinStrategy()
 _cost_first_strategy = CostFirstStrategy()
 _priority_strategy = PriorityStrategy()
+_quota_aware_strategy = QuotaAwareStrategy()
 
 
 async def get_db():
@@ -89,7 +92,10 @@ def get_model_service(db: DbSession) -> ModelService:
     """Get Model Service"""
     model_repo = SQLAlchemyModelRepository(db)
     provider_repo = SQLAlchemyProviderRepository(db)
-    return ModelService(model_repo, provider_repo)
+    log_repo = SQLAlchemyLogRepository(db)
+    kv_repo = _get_kv_repo(db)
+    quota_service = ProviderQuotaService(log_repo, kv_repo)
+    return ModelService(model_repo, provider_repo, quota_service=quota_service)
 
 
 def get_api_key_service(db: DbSession) -> ApiKeyService:
@@ -102,6 +108,12 @@ def get_log_service(db: DbSession) -> LogService:
     """Get Log Service"""
     repo = SQLAlchemyLogRepository(db)
     return LogService(repo)
+
+def get_quota_service(db: DbSession) -> ProviderQuotaService:
+    """Get Provider quota service."""
+    log_repo = SQLAlchemyLogRepository(db)
+    kv_repo = _get_kv_repo(db)
+    return ProviderQuotaService(log_repo, kv_repo)
 
 
 def _get_kv_repo(db: AsyncSession):
@@ -122,6 +134,7 @@ def get_proxy_service(db: DbSession) -> ProxyService:
     log_repo = SQLAlchemyLogRepository(db)
     kv_repo = _get_kv_repo(db)
     protocol_hooks = ProtocolConversionHooks(kv_repo=kv_repo)
+    quota_service = ProviderQuotaService(log_repo, kv_repo)
     return ProxyService(
         model_repo,
         provider_repo,
@@ -129,7 +142,9 @@ def get_proxy_service(db: DbSession) -> ProxyService:
         round_robin_strategy=_round_robin_strategy,
         cost_first_strategy=_cost_first_strategy,
         priority_strategy=_priority_strategy,
+        quota_aware_strategy=_quota_aware_strategy,
         protocol_hooks=protocol_hooks,
+        quota_service=quota_service,
     )
 
 
@@ -212,5 +227,6 @@ ProviderServiceDep = Annotated[ProviderService, Depends(get_provider_service)]
 ModelServiceDep = Annotated[ModelService, Depends(get_model_service)]
 ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
 LogServiceDep = Annotated[LogService, Depends(get_log_service)]
+QuotaServiceDep = Annotated[ProviderQuotaService, Depends(get_quota_service)]
 ProxyServiceDep = Annotated[ProxyService, Depends(get_proxy_service)]
 CurrentApiKey = Annotated[ApiKeyModel, Depends(get_current_api_key)]

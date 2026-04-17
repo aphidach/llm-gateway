@@ -28,6 +28,7 @@ from app.domain.log import (
     RequestLogQuery,
     RequestLogSummary,
 )
+from app.domain.quota import ProviderDailyUsage
 from app.repositories.log_repo import LogRepository
 
 
@@ -112,6 +113,7 @@ class SQLAlchemyLogRepository(LogRepository):
             response_status=entity.response_status,
             response_body=detail.response_body if detail else entity.response_body,
             usage_details=detail.usage_details if detail else entity.usage_details,
+            routing_details=detail.routing_details if detail else None,
             error_info=detail.error_info if detail else entity.error_info,
             matched_provider_count=entity.matched_provider_count,
             trace_id=entity.trace_id,
@@ -204,6 +206,7 @@ class SQLAlchemyLogRepository(LogRepository):
             converted_request_body=data.converted_request_body,
             upstream_response_body=data.upstream_response_body,
             usage_details=data.usage_details,
+            routing_details=data.routing_details,
             error_info=data.error_info,
         )
         self.session.add(detail_entity)
@@ -237,6 +240,7 @@ class SQLAlchemyLogRepository(LogRepository):
             response_status=entity.response_status,
             response_body=data.response_body,
             usage_details=data.usage_details,
+            routing_details=data.routing_details,
             error_info=data.error_info,
             matched_provider_count=entity.matched_provider_count,
             trace_id=entity.trace_id,
@@ -250,6 +254,54 @@ class SQLAlchemyLogRepository(LogRepository):
             request_method=entity.request_method,
             upstream_url=entity.upstream_url,
         )
+
+    async def get_provider_daily_usage(
+        self,
+        *,
+        provider_ids: list[int] | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> list[ProviderDailyUsage]:
+        conditions = [RequestLogORM.provider_id.isnot(None)]
+        if provider_ids is not None:
+            if not provider_ids:
+                return []
+            conditions.append(RequestLogORM.provider_id.in_(provider_ids))
+        if start_time is not None:
+            conditions.append(RequestLogORM.request_time >= to_utc_naive(start_time))
+        if end_time is not None:
+            conditions.append(RequestLogORM.request_time < to_utc_naive(end_time))
+
+        stmt = (
+            select(
+                RequestLogORM.provider_id.label("provider_id"),
+                func.coalesce(func.sum(RequestLogORM.input_tokens), 0).label(
+                    "input_tokens_used"
+                ),
+                func.coalesce(func.sum(RequestLogORM.output_tokens), 0).label(
+                    "output_tokens_used"
+                ),
+            )
+            .where(and_(*conditions))
+            .group_by(RequestLogORM.provider_id)
+        )
+        rows = (await self.session.execute(stmt)).mappings().all()
+        results: list[ProviderDailyUsage] = []
+        for row in rows:
+            provider_id = row["provider_id"]
+            if provider_id is None:
+                continue
+            input_tokens = int(row["input_tokens_used"] or 0)
+            output_tokens = int(row["output_tokens_used"] or 0)
+            results.append(
+                ProviderDailyUsage(
+                    provider_id=int(provider_id),
+                    input_tokens_used=input_tokens,
+                    output_tokens_used=output_tokens,
+                    total_tokens_used=input_tokens + output_tokens,
+                )
+            )
+        return results
 
     async def get_by_id(self, id: int) -> Optional[RequestLogModel]:
         """Get log by ID with full detail"""

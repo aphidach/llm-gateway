@@ -401,6 +401,8 @@ class RequestLogDetail(Base):
     upstream_response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Usage details (JSON)
     usage_details: Mapped[Optional[dict]] = mapped_column(SQLiteJSON, nullable=True)
+    # Routing metadata (strategy, fallback, quota decisions)
+    routing_details: Mapped[Optional[dict]] = mapped_column(SQLiteJSON, nullable=True)
     # Error info
     error_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

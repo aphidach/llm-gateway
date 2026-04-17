@@ -20,13 +20,21 @@ from app.domain.model import (
     ModelMappingProviderUpdate,
     ModelMappingProviderResponse,
 )
+from app.domain.quota import ProviderQuotaConfig
 from app.repositories.model_repo import ModelRepository
 from app.repositories.provider_repo import ProviderRepository
 from app.common.costs import calculate_cost_from_billing, resolve_billing
 from app.rules.context import RuleContext, TokenUsage
 from app.rules.engine import RuleEngine
+from app.services.quota_service import ProviderQuotaService
 from app.services.retry_handler import RetryHandler
-from app.services.strategy import CostFirstStrategy, PriorityStrategy, RoundRobinStrategy, SelectionStrategy
+from app.services.strategy import (
+    CostFirstStrategy,
+    PriorityStrategy,
+    QuotaAwareStrategy,
+    RoundRobinStrategy,
+    SelectionStrategy,
+)
 
 
 class ModelService:
@@ -40,6 +48,7 @@ class ModelService:
         self,
         model_repo: ModelRepository,
         provider_repo: ProviderRepository,
+        quota_service: Optional[ProviderQuotaService] = None,
     ):
         """
         Initialize Service
@@ -50,9 +59,11 @@ class ModelService:
         """
         self.model_repo = model_repo
         self.provider_repo = provider_repo
+        self.quota_service = quota_service
         self._round_robin_strategy = RoundRobinStrategy()
         self._cost_first_strategy = CostFirstStrategy()
         self._priority_strategy = PriorityStrategy()
+        self._quota_aware_strategy = QuotaAwareStrategy()
     
     # ============ Model Mapping Operations ============
     
@@ -174,10 +185,23 @@ class ModelService:
 
         strategy = self._get_strategy(mapping.strategy)
         retry_handler = RetryHandler(strategy)
+        quota_state_map = None
+        if mapping.strategy == "quota_aware" and self.quota_service is not None:
+            quota_state_map = await self.quota_service.get_provider_states(
+                [
+                    ProviderQuotaConfig(
+                        provider_id=provider.id,
+                        provider_name=provider.name,
+                        provider_options=provider.provider_options,
+                    )
+                    for provider in eligible_providers.values()
+                ]
+            )
         ordered_candidates = await retry_handler.get_ordered_candidates(
             candidates,
             requested_model,
             input_tokens=data.input_tokens,
+            quota_state_map=quota_state_map,
         )
 
         response_items: list[ModelMatchProviderResponse] = []
@@ -343,6 +367,8 @@ class ModelService:
             return self._cost_first_strategy
         if strategy_name == "priority":
             return self._priority_strategy
+        if strategy_name == "quota_aware":
+            return self._quota_aware_strategy
         return self._round_robin_strategy
     
     # ============ Model-Provider Mapping Operations ============

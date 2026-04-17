@@ -354,7 +354,8 @@
       "strategy": {
         "roundRobin": "Round Robin",
         "priority": "Priority",
-        "costFirst": "Cost First"
+        "costFirst": "Cost First",
+        "quotaAware": "Quota Aware"
       },
       "viewDetails": "View Details",
       "testModel": "Test Model"
@@ -375,6 +376,7 @@
       "roundRobin": "Round Robin",
       "costFirst": "Cost First",
       "priority": "Priority",
+      "quotaAware": "Quota Aware",
       "active": "Active",
       "inactive": "Inactive",
       "pendingConfig": "Pending Config",
@@ -407,6 +409,9 @@
       "costFirstTitle": "Cost First",
       "costFirstDescription": "Prioritize providers with the lowest estimated cost",
       "costFirstTag": "Cost Optimization",
+      "quotaAwareTitle": "Quota Aware",
+      "quotaAwareDescription": "Avoid providers in cooldown and favor healthy quota headroom before falling back",
+      "quotaAwareTag": "Runtime Routing",
       "strategyHint": "Choose how the gateway selects providers for this model",
       "enabledStatusLabel": "Enabled Status"
     },

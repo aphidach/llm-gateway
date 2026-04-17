@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     LOG_RETENTION_DAYS: int = 90
     # Log cleanup interval in hours (default 24 hours)
     LOG_CLEANUP_INTERVAL_HOURS: int = 24
+    # Soft threshold ratio for quota-aware routing
+    QUOTA_AWARE_SOFT_LIMIT_RATIO: float = 0.8
+    # Cooldown after quota-related provider failures
+    QUOTA_AWARE_COOLDOWN_SECONDS: int = 900
 
     # CORS Config
     # Comma-separated list of allowed origins for CORS

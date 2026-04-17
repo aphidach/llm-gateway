@@ -373,7 +373,7 @@ export function ModelForm({
               name="strategy"
               control={control}
               render={({ field }) => (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   {/* Round Robin Strategy */}
                   <Card
                     className={`cursor-pointer transition-all duration-200 hover:shadow-md ${
@@ -494,6 +494,44 @@ export function ModelForm({
                         <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs">
                           <span>📊</span>
                           <span>{t('form.costFirstTag')}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card
+                    className={`cursor-pointer transition-all duration-200 hover:shadow-md ${
+                      field.value === 'quota_aware'
+                        ? 'border-primary border-2 bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    }`}
+                    onClick={() => field.onChange('quota_aware')}
+                  >
+                    <div className="p-4 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                          field.value === 'quota_aware'
+                            ? 'border-primary bg-primary'
+                            : 'border-muted-foreground'
+                        }`}>
+                          {field.value === 'quota_aware' && (
+                            <div className="w-2 h-2 rounded-full bg-white"></div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">🧭</span>
+                          <span className="font-semibold text-base">
+                            {t('form.quotaAwareTitle')}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground pl-8">
+                        {t('form.quotaAwareDescription')}
+                      </p>
+                      <div className="pl-8 pt-1">
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-xs">
+                          <span>⛽</span>
+                          <span>{t('form.quotaAwareTag')}</span>
                         </div>
                       </div>
                     </div>

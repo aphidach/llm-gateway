@@ -30,17 +30,20 @@ from app.common.usage_extractor import extract_usage_details
 from app.common.utils import generate_trace_id
 from app.domain.log import RequestLogCreate
 from app.domain.model import ModelMapping, ModelMappingProviderResponse
+from app.domain.quota import ProviderQuotaConfig, ProviderQuotaState
 from app.domain.provider import Provider
 from app.providers import ProviderResponse, get_provider_client
 from app.repositories.log_repo import LogRepository
 from app.repositories.model_repo import ModelRepository
 from app.repositories.provider_repo import ProviderRepository
+from app.services.quota_service import ProviderQuotaService
 from app.rules import CandidateProvider, RuleContext, RuleEngine, TokenUsage
 from app.services.retry_handler import AttemptRecord, RetryHandler
 from app.services.protocol_hooks import OPENAI_IMAGE_PATHS, ProtocolConversionHooks
 from app.services.strategy import (
     CostFirstStrategy,
     PriorityStrategy,
+    QuotaAwareStrategy,
     RoundRobinStrategy,
     SelectionStrategy,
 )
@@ -105,7 +108,9 @@ class ProxyService:
         round_robin_strategy: Optional[SelectionStrategy] = None,
         cost_first_strategy: Optional[SelectionStrategy] = None,
         priority_strategy: Optional[SelectionStrategy] = None,
+        quota_aware_strategy: Optional[SelectionStrategy] = None,
         protocol_hooks: Optional[ProtocolConversionHooks] = None,
+        quota_service: Optional[ProviderQuotaService] = None,
     ):
         """
         Initialize Service
@@ -126,7 +131,9 @@ class ProxyService:
         self._round_robin_strategy = round_robin_strategy or RoundRobinStrategy()
         self._cost_first_strategy = cost_first_strategy or CostFirstStrategy()
         self._priority_strategy = priority_strategy or PriorityStrategy()
+        self._quota_aware_strategy = quota_aware_strategy or QuotaAwareStrategy()
         self._protocol_hooks = protocol_hooks or ProtocolConversionHooks()
+        self._quota_service = quota_service
 
     async def _write_log(self, log_data: RequestLogCreate) -> None:
         await self.log_repo.create(log_data)
@@ -145,6 +152,8 @@ class ProxyService:
             return self._cost_first_strategy
         if strategy_name == "priority":
             return self._priority_strategy
+        if strategy_name == "quota_aware":
+            return self._quota_aware_strategy
         else:
             # Default to round_robin for unknown strategies
             return self._round_robin_strategy
@@ -237,6 +246,95 @@ class ProxyService:
         if not isinstance(provider_options, dict):
             return False
         return bool(provider_options.get("no_suffix"))
+
+    @staticmethod
+    def _build_quota_configs(
+        candidates: list[CandidateProvider],
+    ) -> list[ProviderQuotaConfig]:
+        configs: dict[int, ProviderQuotaConfig] = {}
+        for candidate in candidates:
+            configs.setdefault(
+                candidate.provider_id,
+                ProviderQuotaConfig(
+                    provider_id=candidate.provider_id,
+                    provider_name=candidate.provider_name,
+                    provider_options=candidate.provider_options,
+                ),
+            )
+        return list(configs.values())
+
+    @staticmethod
+    def _serialize_quota_state_map(
+        quota_state_map: Optional[dict[int, ProviderQuotaState]],
+    ) -> Optional[dict[str, dict[str, Any]]]:
+        if not quota_state_map:
+            return None
+        return {
+            str(provider_id): {
+                "status": state.status,
+                "total_tokens_used": state.total_tokens_used,
+                "daily_token_budget": state.daily_token_budget,
+                "soft_limit_tokens": state.soft_limit_tokens,
+                "in_cooldown": state.in_cooldown,
+                "over_soft_limit": state.over_soft_limit,
+                "cooldown_until": (
+                    state.cooldown_until.isoformat()
+                    if state.cooldown_until is not None
+                    else None
+                ),
+            }
+            for provider_id, state in quota_state_map.items()
+        }
+
+    @classmethod
+    def _build_routing_details(
+        cls,
+        *,
+        strategy_name: str,
+        candidates: list[CandidateProvider],
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
+        selected_provider: Optional[CandidateProvider] = None,
+        failure_events: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        blocked_provider_ids: list[int] = []
+        degraded_provider_ids: list[int] = []
+        if quota_state_map:
+            blocked_provider_ids = sorted(
+                provider_id
+                for provider_id, state in quota_state_map.items()
+                if state.in_cooldown or state.status == "exhausted"
+            )
+            degraded_provider_ids = sorted(
+                provider_id
+                for provider_id, state in quota_state_map.items()
+                if state.over_soft_limit or state.status == "degraded"
+            )
+        return {
+            "strategy": strategy_name,
+            "candidate_count": len(candidates),
+            "matched_candidates": [
+                {
+                    "provider_id": candidate.provider_id,
+                    "provider_name": candidate.provider_name,
+                    "target_model": candidate.target_model,
+                    "priority": candidate.priority,
+                }
+                for candidate in candidates
+            ],
+            "blocked_provider_ids": blocked_provider_ids,
+            "degraded_provider_ids": degraded_provider_ids,
+            "selected_provider_id": (
+                selected_provider.provider_id if selected_provider else None
+            ),
+            "selected_provider_name": (
+                selected_provider.provider_name if selected_provider else None
+            ),
+            "selected_target_model": (
+                selected_provider.target_model if selected_provider else None
+            ),
+            "quota_state": cls._serialize_quota_state_map(quota_state_map),
+            "failures": failure_events or [],
+        }
 
     async def _resolve_candidates(
         self,
@@ -424,6 +522,12 @@ class ProxyService:
         # Select strategy based on model configuration
         strategy = self._get_strategy(model_mapping.strategy)
         retry_handler = RetryHandler(strategy)
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None
+        if model_mapping.strategy == "quota_aware" and self._quota_service is not None:
+            quota_state_map = await self._quota_service.get_provider_states(
+                self._build_quota_configs(candidates)
+            )
+        failure_events: list[dict[str, Any]] = []
 
         failed_attempt_logged = False
         # Track protocol conversion data for logging
@@ -436,6 +540,33 @@ class ProxyService:
 
         async def log_failed_attempt(attempt: AttemptRecord) -> None:
             nonlocal failed_attempt_logged
+            is_quota_failure = self._quota_service is not None and self._quota_service.is_quota_failure(
+                attempt.response
+            )
+            if is_quota_failure and self._quota_service is not None:
+                updated_state = await self._quota_service.mark_quota_failure(
+                    provider_id=attempt.provider.provider_id,
+                    provider_name=attempt.provider.provider_name,
+                    provider_options=attempt.provider.provider_options,
+                    response=attempt.response,
+                    current_state=(
+                        quota_state_map.get(attempt.provider.provider_id)
+                        if quota_state_map is not None
+                        else None
+                    ),
+                )
+                if quota_state_map is not None:
+                    quota_state_map[attempt.provider.provider_id] = updated_state
+            failure_events.append(
+                {
+                    "provider_id": attempt.provider.provider_id,
+                    "provider_name": attempt.provider.provider_name,
+                    "target_model": attempt.provider.target_model,
+                    "status_code": attempt.response.status_code,
+                    "error": attempt.response.error,
+                    "reason": "quota_failure" if is_quota_failure else "provider_failure",
+                }
+            )
             provider_mapping = provider_mapping_by_id.get(
                 self._candidate_key(attempt.provider)
             )
@@ -501,6 +632,13 @@ class ProxyService:
                 request_body=sanitized_body,
                 response_status=attempt.response.status_code,
                 response_body=self._serialize_response_body(attempt.response.body),
+                routing_details=self._build_routing_details(
+                    strategy_name=model_mapping.strategy,
+                    candidates=candidates,
+                    quota_state_map=quota_state_map,
+                    selected_provider=attempt.provider,
+                    failure_events=failure_events,
+                ),
                 error_info=attempt.response.error,
                 trace_id=trace_id,
                 is_stream=False,
@@ -633,6 +771,7 @@ class ProxyService:
             forward_fn=forward_fn,
             input_tokens=input_tokens,
             image_count=image_count,
+            quota_state_map=quota_state_map,
             on_failure_attempt=log_failed_attempt,
         )
 
@@ -847,6 +986,13 @@ class ProxyService:
             response_status=result.response.status_code,
             response_body=self._serialize_response_body(result.response.body),
             usage_details=usage_details,
+            routing_details=self._build_routing_details(
+                strategy_name=model_mapping.strategy,
+                candidates=candidates,
+                quota_state_map=quota_state_map,
+                selected_provider=result.final_provider,
+                failure_events=failure_events,
+            ),
             error_info=result.response.error,
             trace_id=trace_id,
             is_stream=False,
@@ -959,6 +1105,12 @@ class ProxyService:
         # Select strategy based on model configuration
         strategy = self._get_strategy(model_mapping.strategy)
         retry_handler = RetryHandler(strategy)
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None
+        if model_mapping.strategy == "quota_aware" and self._quota_service is not None:
+            quota_state_map = await self._quota_service.get_provider_states(
+                self._build_quota_configs(candidates)
+            )
+        failure_events: list[dict[str, Any]] = []
 
         # Track protocol conversion data for logging
         stream_conversion_data: dict[str, Any] = {
@@ -1194,6 +1346,33 @@ class ProxyService:
             return wrapped()
 
         async def log_failed_attempt(attempt: AttemptRecord) -> None:
+            is_quota_failure = self._quota_service is not None and self._quota_service.is_quota_failure(
+                attempt.response
+            )
+            if is_quota_failure and self._quota_service is not None:
+                updated_state = await self._quota_service.mark_quota_failure(
+                    provider_id=attempt.provider.provider_id,
+                    provider_name=attempt.provider.provider_name,
+                    provider_options=attempt.provider.provider_options,
+                    response=attempt.response,
+                    current_state=(
+                        quota_state_map.get(attempt.provider.provider_id)
+                        if quota_state_map is not None
+                        else None
+                    ),
+                )
+                if quota_state_map is not None:
+                    quota_state_map[attempt.provider.provider_id] = updated_state
+            failure_events.append(
+                {
+                    "provider_id": attempt.provider.provider_id,
+                    "provider_name": attempt.provider.provider_name,
+                    "target_model": attempt.provider.target_model,
+                    "status_code": attempt.response.status_code,
+                    "error": attempt.response.error,
+                    "reason": "quota_failure" if is_quota_failure else "provider_failure",
+                }
+            )
             provider_mapping = provider_mapping_by_id.get(
                 self._candidate_key(attempt.provider)
             )
@@ -1259,6 +1438,13 @@ class ProxyService:
                 request_body=sanitized_body,
                 response_status=attempt.response.status_code,
                 response_body=self._serialize_response_body(attempt.response.body),
+                routing_details=self._build_routing_details(
+                    strategy_name=model_mapping.strategy,
+                    candidates=candidates,
+                    quota_state_map=quota_state_map,
+                    selected_provider=attempt.provider,
+                    failure_events=failure_events,
+                ),
                 error_info=attempt.response.error,
                 trace_id=trace_id,
                 is_stream=True,
@@ -1290,6 +1476,7 @@ class ProxyService:
             forward_stream_fn,
             input_tokens=input_tokens,
             image_count=image_count,
+            quota_state_map=quota_state_map,
             on_failure_attempt=log_failed_attempt,
         )
 
@@ -1475,6 +1662,13 @@ class ProxyService:
                     else None,
                     response_status=initial_response.status_code,
                     usage_details=usage_details,
+                    routing_details=self._build_routing_details(
+                        strategy_name=model_mapping.strategy,
+                        candidates=candidates,
+                        quota_state_map=quota_state_map,
+                        selected_provider=final_provider,
+                        failure_events=failure_events,
+                    ),
                     error_info=initial_response.error or stream_error,
                     trace_id=trace_id,
                     is_stream=True,

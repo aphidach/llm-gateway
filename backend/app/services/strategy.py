@@ -11,6 +11,7 @@ import logging
 
 from app.rules.models import CandidateProvider
 from app.common.costs import resolve_billing, calculate_cost_from_billing
+from app.domain.quota import ProviderQuotaState
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,39 @@ def _candidate_key(candidate: CandidateProvider) -> tuple[str, int] | tuple[str,
     if candidate.provider_mapping_id is not None:
         return ("mapping", candidate.provider_mapping_id)
     return ("provider_target", candidate.provider_id, candidate.target_model)
+
+
+def _estimate_candidate_input_cost(
+    candidate: CandidateProvider,
+    input_tokens: int,
+    image_count: Optional[int] = None,
+) -> float:
+    billing = resolve_billing(
+        input_tokens=input_tokens,
+        model_input_price=candidate.model_input_price,
+        model_output_price=candidate.model_output_price,
+        model_billing_mode=candidate.model_billing_mode,
+        model_per_request_price=candidate.model_per_request_price,
+        model_per_image_price=candidate.model_per_image_price,
+        model_tiered_pricing=candidate.model_tiered_pricing,
+        provider_billing_mode=candidate.billing_mode,
+        provider_per_request_price=candidate.per_request_price,
+        provider_per_image_price=candidate.per_image_price,
+        provider_tiered_pricing=candidate.tiered_pricing,
+        provider_input_price=candidate.input_price,
+        provider_output_price=candidate.output_price,
+    )
+    cost_breakdown = calculate_cost_from_billing(
+        input_tokens=input_tokens,
+        output_tokens=0,
+        billing=billing,
+        image_count=image_count,
+    )
+    return (
+        cost_breakdown.total_cost
+        if billing.billing_mode in ("per_request", "per_image")
+        else cost_breakdown.input_cost
+    )
 
 
 class SelectionStrategy(ABC):
@@ -35,6 +69,7 @@ class SelectionStrategy(ABC):
         requested_model: str,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Select a provider from the candidate list
@@ -58,6 +93,7 @@ class SelectionStrategy(ABC):
         current: CandidateProvider,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Get next provider (used for failover)
@@ -103,6 +139,7 @@ class RoundRobinStrategy(SelectionStrategy):
         requested_model: str,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Round-robin provider selection
@@ -162,6 +199,7 @@ class RoundRobinStrategy(SelectionStrategy):
         current: CandidateProvider,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Get next provider (used for failover)
@@ -295,6 +333,7 @@ class PriorityStrategy(SelectionStrategy):
         requested_model: str,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Select provider by priority with round robin within same priority
@@ -322,6 +361,7 @@ class PriorityStrategy(SelectionStrategy):
         current: CandidateProvider,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Get next provider by priority (used for failover)
@@ -414,34 +454,7 @@ class CostFirstStrategy(SelectionStrategy):
         Returns:
             float: Estimated input cost in USD
         """
-        # Resolve billing configuration
-        billing = resolve_billing(
-            input_tokens=input_tokens,
-            model_input_price=candidate.model_input_price,
-            model_output_price=candidate.model_output_price,
-            model_billing_mode=candidate.model_billing_mode,
-            model_per_request_price=candidate.model_per_request_price,
-            model_per_image_price=candidate.model_per_image_price,
-            model_tiered_pricing=candidate.model_tiered_pricing,
-            provider_billing_mode=candidate.billing_mode,
-            provider_per_request_price=candidate.per_request_price,
-            provider_per_image_price=candidate.per_image_price,
-            provider_tiered_pricing=candidate.tiered_pricing,
-            provider_input_price=candidate.input_price,
-            provider_output_price=candidate.output_price,
-        )
-
-        # Calculate cost (only input cost, as we're selecting before making the request)
-        cost_breakdown = calculate_cost_from_billing(
-            input_tokens=input_tokens,
-            output_tokens=0,  # We don't know output tokens yet
-            billing=billing,
-            image_count=image_count,
-        )
-
-        # For per_request/per_image billing, use the full total_cost
-        # For token-based billing, use only the input_cost
-        return cost_breakdown.total_cost if billing.billing_mode in ("per_request", "per_image") else cost_breakdown.input_cost
+        return _estimate_candidate_input_cost(candidate, input_tokens, image_count)
 
     async def select(
         self,
@@ -449,6 +462,7 @@ class CostFirstStrategy(SelectionStrategy):
         requested_model: str,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Select provider with lowest cost
@@ -537,6 +551,7 @@ class CostFirstStrategy(SelectionStrategy):
         current: CandidateProvider,
         input_tokens: Optional[int] = None,
         image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
     ) -> Optional[CandidateProvider]:
         """
         Get next provider by cost (used for failover)
@@ -620,3 +635,130 @@ class CostFirstStrategy(SelectionStrategy):
         )
 
         return next_candidate
+
+
+class QuotaAwareStrategy(SelectionStrategy):
+    """
+    Quota-aware provider selection.
+
+    Filters exhausted/cooling-down providers, deprioritizes soft-limit providers,
+    then sorts by priority and estimated request cost.
+    """
+
+    def __init__(self):
+        self._round_robin = RoundRobinStrategy()
+
+    @staticmethod
+    def _normalized_state(
+        candidate: CandidateProvider,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]],
+    ) -> Optional[ProviderQuotaState]:
+        if not quota_state_map:
+            return None
+        return quota_state_map.get(candidate.provider_id)
+
+    def _ordered_candidates(
+        self,
+        candidates: list[CandidateProvider],
+        *,
+        input_tokens: Optional[int],
+        image_count: Optional[int],
+        quota_state_map: Optional[dict[int, ProviderQuotaState]],
+    ) -> list[tuple[CandidateProvider, tuple[int, int, float, int, str, int]]]:
+        ordered: list[tuple[CandidateProvider, tuple[int, int, float, int, str, int]]] = []
+        for candidate in candidates:
+            state = self._normalized_state(candidate, quota_state_map)
+            if state and (state.in_cooldown or state.status == "exhausted"):
+                continue
+
+            degraded_rank = (
+                1
+                if state and (state.over_soft_limit or state.status == "degraded")
+                else 0
+            )
+            estimated_cost = float("inf")
+            if input_tokens not in (None, 0):
+                try:
+                    estimated_cost = _estimate_candidate_input_cost(
+                        candidate,
+                        int(input_tokens),
+                        image_count,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "QuotaAwareStrategy: Error calculating cost for provider %s (ID: %s): %s",
+                        candidate.provider_name,
+                        candidate.provider_id,
+                        exc,
+                    )
+            sort_key = (
+                degraded_rank,
+                candidate.priority,
+                estimated_cost,
+                candidate.provider_id,
+                candidate.target_model,
+                candidate.provider_mapping_id or 0,
+            )
+            ordered.append((candidate, sort_key))
+
+        ordered.sort(key=lambda item: item[1])
+        return ordered
+
+    async def select(
+        self,
+        candidates: list[CandidateProvider],
+        requested_model: str,
+        input_tokens: Optional[int] = None,
+        image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
+    ) -> Optional[CandidateProvider]:
+        ordered = self._ordered_candidates(
+            candidates,
+            input_tokens=input_tokens,
+            image_count=image_count,
+            quota_state_map=quota_state_map,
+        )
+        if not ordered:
+            return None
+
+        first_key = ordered[0][1][:3]
+        tied = [candidate for candidate, key in ordered if key[:3] == first_key]
+        if len(tied) == 1:
+            return tied[0]
+
+        return await self._round_robin.select(
+            tied,
+            requested_model,
+            input_tokens=input_tokens,
+            image_count=image_count,
+            quota_state_map=quota_state_map,
+        )
+
+    async def get_next(
+        self,
+        candidates: list[CandidateProvider],
+        requested_model: str,
+        current: CandidateProvider,
+        input_tokens: Optional[int] = None,
+        image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
+    ) -> Optional[CandidateProvider]:
+        ordered = self._ordered_candidates(
+            candidates,
+            input_tokens=input_tokens,
+            image_count=image_count,
+            quota_state_map=quota_state_map,
+        )
+        if not ordered:
+            return None
+
+        ordered_candidates = [candidate for candidate, _ in ordered]
+        for index, candidate in enumerate(ordered_candidates):
+            if _candidate_key(candidate) == _candidate_key(current):
+                next_index = index + 1
+                if next_index >= len(ordered_candidates):
+                    return None
+                return ordered_candidates[next_index]
+
+        # The current provider may have been removed after a quota failure.
+        return ordered_candidates[0]

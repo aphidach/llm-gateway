@@ -10,8 +10,9 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.api.deps import ProviderServiceDep, require_admin_auth
+from app.api.deps import ProviderServiceDep, QuotaServiceDep, require_admin_auth
 from app.common.errors import AppError
+from app.domain.quota import ProviderQuotaConfig, ProviderQuotaState
 from app.domain.provider import ProviderCreate, ProviderUpdate, ProviderResponse, ProviderExport
 from app.common.provider_protocols import list_frontend_protocol_configs
 
@@ -124,6 +125,36 @@ async def list_provider_protocols():
         )
         for config in list_frontend_protocol_configs()
     ]
+
+
+@router.get("/quota-status", response_model=list[ProviderQuotaState])
+async def list_provider_quota_status(
+    service: ProviderServiceDep,
+    quota_service: QuotaServiceDep,
+    is_active: Optional[bool] = Query(True, description="Filter by active status"),
+):
+    """
+    List provider quota status derived from logs and cooldown state.
+    """
+    try:
+        providers, _ = await service.get_all(
+            is_active=is_active,
+            page=1,
+            page_size=1000,
+        )
+        states = await quota_service.get_provider_states(
+            [
+                ProviderQuotaConfig(
+                    provider_id=provider.id,
+                    provider_name=provider.name,
+                    provider_options=provider.provider_options,
+                )
+                for provider in providers
+            ]
+        )
+        return [states[provider.id] for provider in providers if provider.id in states]
+    except AppError as e:
+        return JSONResponse(content=e.to_dict(), status_code=e.status_code)
 
 
 @router.get("/{provider_id}", response_model=ProviderResponse)

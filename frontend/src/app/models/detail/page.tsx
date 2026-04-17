@@ -176,6 +176,8 @@ function ModelDetailContent() {
     switch (strategy) {
       case 'cost_first':
         return t('list.strategy.costFirst');
+      case 'quota_aware':
+        return t('list.strategy.quotaAware');
       case 'priority':
         return t('list.strategy.priority');
       case 'round_robin':
