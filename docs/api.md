@@ -49,6 +49,19 @@ This document defines the interface specifications for the LLM Gateway backend a
 
 ---
 
+### Virtual Models and `model: "auto"`
+
+The proxy accepts virtual `requested_model` names as long as they exist in admin model mappings. `model: "auto"` is one such example: clients send it as a normal model name, the gateway resolves it through `/admin/models` and `/admin/model-providers`, and only the outbound `model` field is rewritten to the selected upstream `target_model`.
+
+When a model mapping uses `strategy: "quota_aware"`, routing still follows the standard pipeline:
+
+1. Match model-level and provider-level rules.
+2. Build the candidate provider list.
+3. Filter and rank those candidates using provider quota runtime state.
+4. Forward the request and fail over to another provider when quota failures occur.
+
+---
+
 ### 1.1 OpenAI Compatible Interface
 
 #### POST /v1/chat/completions
@@ -271,6 +284,13 @@ Get Provider List
       "base_url": "https://api.openai.com",
       "protocol": "openai",
       "api_type": "chat",
+      "provider_options": {
+        "quota": {
+          "daily_token_budget": 2000000,
+          "soft_limit_ratio": 0.8,
+          "cooldown_seconds": 900
+        }
+      },
       "is_active": true,
       "created_at": "2024-01-01T00:00:00Z",
       "updated_at": "2024-01-01T00:00:00Z"
@@ -297,6 +317,13 @@ Get Single Provider Details
   "protocol": "openai",
   "api_type": "chat",
   "api_key": "sk-***...***",  // Sanitized display
+  "provider_options": {
+    "quota": {
+      "daily_token_budget": 2000000,
+      "soft_limit_ratio": 0.8,
+      "cooldown_seconds": 900
+    }
+  },
   "is_active": true,
   "created_at": "2024-01-01T00:00:00Z",
   "updated_at": "2024-01-01T00:00:00Z"
@@ -317,6 +344,13 @@ Create Provider
   "protocol": "openai",
   "api_type": "chat",
   "api_key": "sk-xxxx",
+  "provider_options": {
+    "quota": {
+      "daily_token_budget": 2000000,
+      "soft_limit_ratio": 0.8,
+      "cooldown_seconds": 900
+    }
+  },
   "is_active": true
 }
 ```
@@ -329,6 +363,7 @@ Create Provider
 | protocol | string | Yes | Protocol type: openai / anthropic |
 | api_type | string | Yes | API type: chat / completion / embedding |
 | api_key | string | No | Provider API Key |
+| provider_options | object | No | Provider-specific options. For quota-aware routing, supports `daily_token_budget`, `soft_limit_ratio`, `quota_cooldown_seconds`, or nested `quota.*` equivalents |
 | is_active | boolean | No | Active status, default true |
 
 **Response**: 201 Created
@@ -339,6 +374,13 @@ Create Provider
   "base_url": "https://api.openai.com",
   "protocol": "openai",
   "api_type": "chat",
+  "provider_options": {
+    "quota": {
+      "daily_token_budget": 2000000,
+      "soft_limit_ratio": 0.8,
+      "cooldown_seconds": 900
+    }
+  },
   "is_active": true,
   "created_at": "2024-01-01T00:00:00Z",
   "updated_at": "2024-01-01T00:00:00Z"
@@ -361,6 +403,47 @@ Update Provider
 ```
 
 **Response**: 200 OK
+
+---
+
+#### GET /admin/providers/quota-status
+
+Get provider quota status derived from request logs and runtime cooldown markers.
+
+**Query Parameters**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| is_active | boolean | No | Filter by active status, default true |
+
+**Response**
+```json
+[
+  {
+    "provider_id": 1,
+    "provider_name": "OpenAI Official",
+    "input_tokens_used": 900000,
+    "output_tokens_used": 100000,
+    "total_tokens_used": 1000000,
+    "daily_token_budget": 2000000,
+    "soft_limit_tokens": 1600000,
+    "soft_limit_ratio": 0.8,
+    "status": "healthy",
+    "in_cooldown": false,
+    "over_soft_limit": false,
+    "reset_at": "2026-04-18T00:00:00Z",
+    "cooldown_until": null,
+    "last_quota_error_at": null,
+    "last_quota_error_message": null,
+    "last_quota_status_code": null
+  }
+]
+```
+
+**Status semantics**
+
+- `healthy`: normal routing candidate
+- `degraded`: above soft threshold, still usable but deprioritized by `quota_aware`
+- `exhausted`: in cooldown or at/above the configured daily token budget
 
 ---
 
@@ -400,8 +483,8 @@ Get Model Mapping List
 {
   "items": [
     {
-      "requested_model": "gpt-4",
-      "strategy": "round_robin",
+      "requested_model": "auto",
+      "strategy": "quota_aware",
       "matching_rules": null,
       "capabilities": {"streaming": true, "function_calling": true},
       "is_active": true,
@@ -425,8 +508,8 @@ Get Single Model Mapping Details (Includes Provider Config)
 **Response**
 ```json
 {
-  "requested_model": "gpt-4",
-  "strategy": "round_robin",
+  "requested_model": "auto",
+  "strategy": "quota_aware",
   "model_type": "chat",
   "matching_rules": {
     "rules": [
@@ -442,7 +525,7 @@ Get Single Model Mapping Details (Includes Provider Config)
       "id": 1,
       "provider_id": 1,
       "provider_name": "OpenAI Official",
-      "target_model_name": "gpt-4-0613",
+      "target_model_name": "gpt-4.1-mini",
       "provider_rules": null,
       "priority": 1,
       "weight": 1,
@@ -451,8 +534,8 @@ Get Single Model Mapping Details (Includes Provider Config)
     {
       "id": 2,
       "provider_id": 2,
-      "provider_name": "Azure OpenAI",
-      "target_model_name": "gpt-4-azure",
+      "provider_name": "Anthropic Official",
+      "target_model_name": "claude-3-7-sonnet-latest",
       "provider_rules": null,
       "priority": 2,
       "weight": 1,
@@ -471,8 +554,8 @@ Create Model Mapping
 **Request Body**
 ```json
 {
-  "requested_model": "gpt-4",
-  "strategy": "round_robin",
+  "requested_model": "auto",
+  "strategy": "quota_aware",
   "matching_rules": {
     "rules": [
       {"field": "headers.x-priority", "operator": "eq", "value": "high"}
@@ -487,11 +570,13 @@ Create Model Mapping
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | requested_model | string | Yes | Requested model name, Primary Key |
-| strategy | string | No | Selection strategy (round_robin/cost_first/priority), default round_robin |
+| strategy | string | No | Selection strategy (`round_robin` / `cost_first` / `priority` / `quota_aware`), default `round_robin` |
 | model_type | string | No | Model type: chat/audio/embedding/images, default chat |
 | matching_rules | object | No | Model level matching rules |
 | capabilities | object | No | Model capabilities description |
 | is_active | boolean | No | Active status, default true |
+
+`requested_model` may be a virtual name such as `auto`. If no `auto` mapping exists, requests with `model: "auto"` return the standard `model_not_found` error.
 
 **Response**: 201 Created
 
@@ -542,10 +627,10 @@ Get All Model-Provider Mappings
   "items": [
     {
       "id": 1,
-      "requested_model": "gpt-4",
+      "requested_model": "auto",
       "provider_id": 1,
       "provider_name": "OpenAI Official",
-      "target_model_name": "gpt-4-0613",
+      "target_model_name": "gpt-4.1-mini",
       "provider_rules": null,
       "priority": 1,
       "weight": 1,
@@ -567,9 +652,9 @@ Create Model-Provider Mapping
 **Request Body**
 ```json
 {
-  "requested_model": "gpt-4",
+  "requested_model": "auto",
   "provider_id": 1,
-  "target_model_name": "gpt-4-0613",
+  "target_model_name": "gpt-4.1-mini",
   "provider_rules": {
     "rules": [
       {"field": "token_usage.input_tokens", "operator": "lte", "value": 4000}
@@ -816,6 +901,36 @@ Get Log Details
     "id": "chatcmpl-xxx",
     "choices": [...]
   },
+  "routing_details": {
+    "strategy": "quota_aware",
+    "candidate_count": 2,
+    "blocked_provider_ids": [2],
+    "degraded_provider_ids": [],
+    "selected_provider_id": 1,
+    "selected_provider_name": "OpenAI Official",
+    "selected_target_model": "gpt-4.1-mini",
+    "quota_state": {
+      "1": {
+        "status": "healthy",
+        "total_tokens_used": 1000000,
+        "daily_token_budget": 2000000,
+        "soft_limit_tokens": 1600000,
+        "in_cooldown": false,
+        "over_soft_limit": false,
+        "cooldown_until": null
+      },
+      "2": {
+        "status": "exhausted",
+        "total_tokens_used": 1800000,
+        "daily_token_budget": 2000000,
+        "soft_limit_tokens": 1600000,
+        "in_cooldown": true,
+        "over_soft_limit": true,
+        "cooldown_until": "2026-04-17T10:15:00Z"
+      }
+    },
+    "failures": []
+  },
   "error_info": null,
   "trace_id": "trace-xxx"
 }
@@ -940,6 +1055,7 @@ interface Provider {
   protocol: "openai" | "anthropic";
   api_type: string; // deprecated
   api_key?: string;
+  provider_options?: Record<string, any>;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -951,6 +1067,7 @@ interface ProviderCreate {
   protocol: "openai" | "anthropic";
   api_type?: string; // deprecated
   api_key?: string;
+  provider_options?: Record<string, any>;
   is_active?: boolean;
 }
 
@@ -960,13 +1077,14 @@ interface ProviderUpdate {
   protocol?: "openai" | "anthropic";
   api_type?: string; // deprecated
   api_key?: string;
+  provider_options?: Record<string, any>;
   is_active?: boolean;
 }
 
 // Model Mapping
 interface ModelMapping {
   requested_model: string;
-  strategy: string;
+  strategy: "round_robin" | "cost_first" | "priority" | "quota_aware";
   model_type: string;
   matching_rules?: RuleSet;
   capabilities?: Record<string, any>;
@@ -1020,6 +1138,7 @@ interface RequestLog {
   request_body?: Record<string, any>;
   response_status?: number;
   response_body?: any;
+  routing_details?: Record<string, any>;
   error_info?: string;
   trace_id?: string;
 }

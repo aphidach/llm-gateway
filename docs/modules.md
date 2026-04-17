@@ -483,7 +483,8 @@ class OpenAIClient(ProviderClient):
 ### Module Responsibilities
 - Proxy core logic orchestration
 - Retry and failover
-- Round Robin strategy implementation
+- Multi-strategy routing (`round_robin`, `priority`, `cost_first`, `quota_aware`)
+- Provider quota state aggregation from logs and cooldown markers
 - Log recording service
 
 ### File Structure
@@ -496,7 +497,8 @@ backend/app/services/
 ├── api_key_service.py     # API Key Service
 ├── log_service.py         # Log Service
 ├── retry_handler.py       # Retry Handler
-└── strategy.py            # Strategy Service (Round Robin)
+├── strategy.py            # Strategy Service
+└── quota_service.py       # Provider quota runtime service
 ```
 
 ### Interface Definition
@@ -514,7 +516,8 @@ class ProxyService:
         rule_engine: RuleEngine,
         strategy: SelectionStrategy,
         retry_handler: RetryHandler,
-        token_counter: TokenCounter
+        token_counter: TokenCounter,
+        quota_service: ProviderQuotaService | None = None,
     ):
         pass
     
@@ -536,7 +539,7 @@ class ProxyService:
         2. Calculate Input Token
         3. Build Rule Context
         4. Rule Engine Match -> Candidate Provider List
-        5. Round Robin Strategy selects Provider
+        5. Strategy selects Provider (quota-aware when configured)
         6. Forward Request (with Retry/Failover logic)
         7. Calculate Output Token
         8. Log Request
@@ -561,6 +564,7 @@ class RetryHandler:
         
         Logic:
         - status >= 500: Retry on same provider 3 times, 1s interval
+        - quota failure / 429: mark current provider in cooldown and switch provider
         - status < 500: Switch directly to next provider
         - All failed: Return last error
         
@@ -581,8 +585,11 @@ class SelectionStrategy(ABC):
     async def select(
         self,
         candidates: List[CandidateProvider],
-        requested_model: str
-    ) -> CandidateProvider:
+        requested_model: str,
+        input_tokens: Optional[int] = None,
+        image_count: Optional[int] = None,
+        quota_state_map: Optional[dict[int, ProviderQuotaState]] = None,
+    ) -> Optional[CandidateProvider]:
         pass
 
 class RoundRobinStrategy(SelectionStrategy):
@@ -591,13 +598,30 @@ class RoundRobinStrategy(SelectionStrategy):
     async def select(self, candidates, requested_model) -> CandidateProvider:
         # Use atomic counter to implement concurrency-safe round robin
         pass
+
+class QuotaAwareStrategy(SelectionStrategy):
+    """Quota-aware Strategy"""
+
+    async def select(
+        self,
+        candidates,
+        requested_model,
+        input_tokens=None,
+        image_count=None,
+        quota_state_map=None,
+    ) -> Optional[CandidateProvider]:
+        # Filter cooldown/exhausted providers, deprioritize soft-limit providers,
+        # then rank by priority, estimated cost, and round robin tie-breaks.
+        pass
 ```
 
 ### Test Points
 - [ ] Complete proxy flow
 - [ ] Retry logic (>=500 Retry on same provider 3 times)
+- [ ] Quota failure handling (429 marks provider cooldown and skips sibling mappings)
 - [ ] Switch logic (<500 Switch directly)
 - [ ] Round Robin strategy correctness and concurrency safety
+- [ ] Quota-aware ordering correctness and observability logging
 - [ ] Log recording completeness
 
 ### Estimated Effort

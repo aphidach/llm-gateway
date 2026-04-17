@@ -59,6 +59,7 @@
   - **Priority-Based**: Use preferred providers first, fallback to others
   - **Weight-Based**: Distribute by custom weight ratios
   - **Cost-Based**: Automatically select the lowest-priced model based on API pricing
+  - **Quota-Aware**: Avoid providers in quota cooldown, deprioritize providers above a soft daily threshold, and fail over across providers when quota errors occur
 - **Model Mapping**: Map virtual model names to multiple backend providers
 
 ### High Availability
@@ -73,6 +74,7 @@
 - **Token Tracking**: Automatic token counting using [tiktoken](https://github.com/openai/tiktoken)
 - **Latency Metrics**: First-byte delay and total response time
 - **Cost Analytics**: Aggregated statistics by time, model, provider, and API key
+- **Routing Audit Trail**: Logs include strategy, selected provider/model, quota filters, cooldown impact, and failover reasons
 - **Data Sanitization**: Automatic redaction of sensitive information in logs
 
 ### Modern Dashboard
@@ -230,7 +232,7 @@ response = client.responses.create(
 
 | Resource | Endpoints |
 |----------|-----------|
-| Providers | `GET/POST /api/admin/providers`, `GET/PUT/DELETE /api/admin/providers/{id}` |
+| Providers | `GET/POST /api/admin/providers`, `GET /api/admin/providers/quota-status`, `GET/PUT/DELETE /api/admin/providers/{id}` |
 | Models | `GET/POST /api/admin/models`, `GET/PUT/DELETE /api/admin/models/{model}` |
 | API Keys | `GET/POST /api/admin/api-keys`, `GET/PUT/DELETE /api/admin/api-keys/{id}` |
 | Logs | `GET /api/admin/logs`, `GET /api/admin/logs/stats` |
@@ -265,6 +267,78 @@ See [docs/api.md](docs/api.md) for complete API documentation.
 | `LLM_GATEWAY_PORT` | 8000 | Host port for Docker Compose |
 | `KV_STORE_TYPE` | database | KV store backend: `database` or `redis` |
 | `REDIS_URL` | - | Redis connection URL (when using Redis KV store) |
+| `QUOTA_AWARE_SOFT_LIMIT_RATIO` | 0.8 | Default soft-limit ratio for quota-aware routing when the provider does not define one |
+| `QUOTA_AWARE_COOLDOWN_SECONDS` | 900 | Default cooldown duration after quota-related failures |
+
+### Quota-Aware `model: "auto"`
+
+`model: "auto"` is supported as a normal virtual model mapping. It is not a hardcoded proxy special case: create an `auto` model through the admin APIs, attach one or more provider mappings, and set `strategy` to `quota_aware`.
+
+How it works:
+
+- Clients still send a normal OpenAI/Anthropic-compatible request body such as `{ "model": "auto", ... }`
+- The gateway runs model and provider rule matching first
+- `quota_aware` then filters and ranks the matched providers using runtime quota state
+- Quota failures such as HTTP `429` place the whole provider into cooldown, so failover skips sibling mappings under that provider
+
+Provider quota config lives in `provider_options`. Supported keys:
+
+- `daily_token_budget`
+- `soft_limit_ratio`
+- `quota_cooldown_seconds`
+- `quota.daily_token_budget`
+- `quota.soft_limit_ratio`
+- `quota.cooldown_seconds`
+
+Example provider:
+
+```json
+{
+  "name": "openai-primary",
+  "base_url": "https://api.openai.com",
+  "protocol": "openai",
+  "api_key": "sk-xxxx",
+  "provider_options": {
+    "quota": {
+      "daily_token_budget": 2000000,
+      "soft_limit_ratio": 0.8,
+      "cooldown_seconds": 900
+    }
+  }
+}
+```
+
+Example virtual model mapping:
+
+```json
+{
+  "requested_model": "auto",
+  "model_type": "chat",
+  "strategy": "quota_aware",
+  "is_active": true
+}
+```
+
+Example provider attachments for `auto`:
+
+```json
+[
+  {
+    "requested_model": "auto",
+    "provider_id": 1,
+    "target_model_name": "gpt-4.1-mini",
+    "priority": 1,
+    "is_active": true
+  },
+  {
+    "requested_model": "auto",
+    "provider_id": 2,
+    "target_model_name": "claude-3-7-sonnet-latest",
+    "priority": 2,
+    "is_active": true
+  }
+]
+```
 
 Generate an encryption key:
 ```bash

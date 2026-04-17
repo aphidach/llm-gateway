@@ -28,12 +28,16 @@
 │  │  │                      Service Layer                                │ │ │
 │  │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐    │ │ │
 │  │  │  │  Proxy     │ │  Rule      │ │  Provider  │ │  Strategy  │    │ │ │
-│  │  │  │  Service   │ │  Engine    │ │  Client    │ │(RoundRobin)│    │ │ │
+│  │  │  │  Service   │ │  Engine    │ │  Client    │ │(Multi-Mode)│    │ │ │
 │  │  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘    │ │ │
 │  │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐    │ │ │
 │  │  │  │  Retry     │ │  Token     │ │  Log       │ │  Provider  │    │ │ │
 │  │  │  │  Handler   │ │  Counter   │ │  Service   │ │  Service   │    │ │ │
 │  │  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘    │ │ │
+│  │  │  ┌────────────┐                                                  │ │ │
+│  │  │  │  Quota     │                                                  │ │ │
+│  │  │  │  Service   │                                                  │ │ │
+│  │  │  └────────────┘                                                  │ │ │
 │  │  └──────────────────────────────────────────────────────────────────┘ │ │
 │  │                          │                                             │ │
 │  │                          ▼                                             │ │
@@ -118,7 +122,7 @@
             │
             ▼
     ┌───────────────┐
-    │ 6. Strategy   │ ◄── Select current provider from candidates
+    │ 6. Strategy   │ ◄── Select current provider from candidates, optionally using runtime quota state
     │    Select     │
     └───────┬───────┘
             │
@@ -138,7 +142,10 @@
     ┌───────────────┐     ┌─────────────────────────────────┐
     │ 9. Check      │────►│ status >= 500:                  │
     │    Status     │     │   - Retry same provider (max 3) │
-    └───────┬───────┘     │ status < 500:                   │
+    └───────┬───────┘     │ quota failure / 429:            │
+            │             │   - Cool down provider          │
+            │             │   - Switch to next provider     │
+            │             │ status < 500:                   │
             │             │   - Switch to next provider     │
             │             └─────────────┬───────────────────┘
             │                           │
@@ -218,7 +225,8 @@ backend/
 │   │   ├── api_key_service.py     # API Key service
 │   │   ├── log_service.py         # Log service
 │   │   ├── retry_handler.py       # Retry handler
-│   │   └── strategy.py            # Strategy service (Round Robin)
+│   │   ├── strategy.py            # Strategy service (round_robin / priority / cost_first / quota_aware)
+│   │   └── quota_service.py       # Provider quota runtime service
 │   │
 │   ├── rules/                     # Rule Engine
 │   │   ├── __init__.py
@@ -262,6 +270,7 @@ backend/
 │   │   ├── model.py               # Model DTO
 │   │   ├── api_key.py             # API Key DTO
 │   │   ├── log.py                 # Log DTO
+│   │   ├── quota.py               # Provider quota DTO
 │   │   └── request.py             # Request/Response DTO
 │   │
 │   └── common/                    # Common Modules
@@ -402,6 +411,7 @@ frontend/
 ├─────────────────────┤   N:1   ├─────────────────────┤
 │ id (PK)             │         │ requested_model(PK) │
 │ requested_model(FK) │─────────│ strategy            │
+│                     │         │ model_type          │
 │ provider_id (FK)    │         │ matching_rules      │
 │ target_model_name   │         │ capabilities        │
 │ provider_rules      │         │ is_active           │
@@ -431,10 +441,19 @@ frontend/
                                 │ request_body        │
                                 │ response_status     │
                                 │ response_body       │
+                                │ routing_details     │
                                 │ error_info          │
                                 │ trace_id            │
                                 └─────────────────────┘
 ```
+
+### 3.1.1 Quota-Aware Routing Notes
+
+- `model: "auto"` is modeled as a normal `model_mappings.requested_model` value.
+- `quota_aware` is a selection strategy, not a protocol-specific special case.
+- Daily quota usage is derived from request logs for the current server day.
+- Temporary provider cooldown is stored in the KV layer so quota-triggered failover can skip the whole provider.
+- `routing_details` in request logs provides an audit trail for quota filtering, selection, and failover.
 
 ### 3.2 Table Structure Detailed Definition
 
@@ -447,6 +466,7 @@ CREATE TABLE service_providers (
     protocol VARCHAR(50) NOT NULL,  -- 'openai' | 'anthropic'
     api_type VARCHAR(50) NOT NULL,
     api_key TEXT,                    -- Provider API Key (Encrypted storage recommended)
+    provider_options JSON,           -- Optional quota and protocol-specific options
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -456,6 +476,7 @@ CREATE TABLE service_providers (
 CREATE TABLE model_mappings (
     requested_model VARCHAR(100) PRIMARY KEY,
     strategy VARCHAR(50) DEFAULT 'round_robin',
+    model_type VARCHAR(50) DEFAULT 'chat',
     matching_rules JSON,             -- Model level rules
     capabilities JSON,               -- Capabilities description
     is_active BOOLEAN DEFAULT TRUE,
@@ -509,6 +530,7 @@ CREATE TABLE request_logs (
     request_body JSON,
     response_status INTEGER,
     response_body TEXT,
+    routing_details JSON,
     error_info TEXT,
     trace_id VARCHAR(100),
     FOREIGN KEY (api_key_id) REFERENCES api_keys(id),

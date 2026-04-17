@@ -60,6 +60,7 @@
   - **优先级（Priority）**：优先使用首选供应商，失败时回退到其他
   - **权重（Weight）**：按自定义权重比例分配请求
   - **最优成本（Cost-Based）**：根据 API 价格，自动选择价格最低的模型
+  - **配额感知（Quota-Aware）**：自动避开处于配额冷却中的供应商，对超过软阈值的供应商降级排序，并在发生配额错误时跨供应商故障转移
 - **模型映射**：将虚拟模型名称映射到多个后端供应商
 
 ### 高可用
@@ -74,6 +75,7 @@
 - **Token 统计**：使用 [tiktoken](https://github.com/openai/tiktoken) 自动计算 Token 用量
 - **延迟指标**：首字节延迟和总响应时间
 - **成本分析**：按时间、模型、供应商和 API Key 聚合统计
+- **路由审计轨迹**：日志记录所使用的策略、最终命中的供应商和模型、配额过滤或冷却影响，以及故障转移原因
 - **数据脱敏**：日志中自动对敏感信息进行脱敏处理
 
 ### 现代化管理面板
@@ -231,7 +233,7 @@ response = client.responses.create(
 
 | 资源 | 端点 |
 |------|------|
-| 供应商 | `GET/POST /api/admin/providers`，`GET/PUT/DELETE /api/admin/providers/{id}` |
+| 供应商 | `GET/POST /api/admin/providers`，`GET /api/admin/providers/quota-status`，`GET/PUT/DELETE /api/admin/providers/{id}` |
 | 模型 | `GET/POST /api/admin/models`，`GET/PUT/DELETE /api/admin/models/{model}` |
 | API Keys | `GET/POST /api/admin/api-keys`，`GET/PUT/DELETE /api/admin/api-keys/{id}` |
 | 日志 | `GET /api/admin/logs`，`GET /api/admin/logs/stats` |
@@ -266,6 +268,78 @@ response = client.responses.create(
 | `LLM_GATEWAY_PORT` | 8000 | Docker Compose 主机端口 |
 | `KV_STORE_TYPE` | database | KV 存储后端：`database` 或 `redis` |
 | `REDIS_URL` | - | Redis 连接 URL（使用 Redis KV 存储时） |
+| `QUOTA_AWARE_SOFT_LIMIT_RATIO` | 0.8 | 当供应商未单独配置时，quota-aware 路由使用的默认软阈值比例 |
+| `QUOTA_AWARE_COOLDOWN_SECONDS` | 900 | 发生配额相关失败后的默认冷却时间（秒） |
+
+### 配置 `model: "auto"` 与 Quota-Aware 路由
+
+`model: "auto"` 作为普通的虚拟模型映射存在，不是代理层中的硬编码保留字。你可以通过管理 API 创建 `auto` 模型，为它挂接多个供应商映射，并把 `strategy` 设置为 `quota_aware`。
+
+工作方式如下：
+
+- 客户端仍然发送标准的 OpenAI/Anthropic 兼容请求体，例如 `{ "model": "auto", ... }`
+- 网关先执行模型级与供应商级规则匹配
+- 然后 `quota_aware` 根据供应商的运行时配额状态做过滤与排序
+- 当发生 HTTP `429` 等配额错误时，整个供应商会进入冷却，因此故障转移会跳过该供应商下的兄弟映射
+
+供应商配额配置放在 `provider_options` 中，支持以下键：
+
+- `daily_token_budget`
+- `soft_limit_ratio`
+- `quota_cooldown_seconds`
+- `quota.daily_token_budget`
+- `quota.soft_limit_ratio`
+- `quota.cooldown_seconds`
+
+供应商示例：
+
+```json
+{
+  "name": "openai-primary",
+  "base_url": "https://api.openai.com",
+  "protocol": "openai",
+  "api_key": "sk-xxxx",
+  "provider_options": {
+    "quota": {
+      "daily_token_budget": 2000000,
+      "soft_limit_ratio": 0.8,
+      "cooldown_seconds": 900
+    }
+  }
+}
+```
+
+虚拟模型映射示例：
+
+```json
+{
+  "requested_model": "auto",
+  "model_type": "chat",
+  "strategy": "quota_aware",
+  "is_active": true
+}
+```
+
+`auto` 的供应商挂接示例：
+
+```json
+[
+  {
+    "requested_model": "auto",
+    "provider_id": 1,
+    "target_model_name": "gpt-4.1-mini",
+    "priority": 1,
+    "is_active": true
+  },
+  {
+    "requested_model": "auto",
+    "provider_id": 2,
+    "target_model_name": "claude-3-7-sonnet-latest",
+    "priority": 2,
+    "is_active": true
+  }
+]
+```
 
 生成加密密钥：
 ```bash
