@@ -6,9 +6,17 @@ Supports SQLite (default) and PostgreSQL databases.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+ENV_FILES = (
+    ROOT_DIR / ".env",
+    ROOT_DIR / "backend" / ".env",
+)
 
 
 class Settings(BaseSettings):
@@ -90,9 +98,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PROXY: str = "200/minute"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILES,
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
 
 
