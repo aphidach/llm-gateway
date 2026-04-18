@@ -107,6 +107,12 @@ class TestProviderQuotaService:
                 body={"error": {"message": "insufficient_quota for today"}},
             )
         )
+        assert ProviderQuotaService.is_quota_failure(
+            ProviderResponse(
+                status_code=401,
+                body={"error": "This model reached daily limit."},
+            )
+        )
         assert not ProviderQuotaService.is_quota_failure(
             ProviderResponse(status_code=400, error="validation error")
         )
